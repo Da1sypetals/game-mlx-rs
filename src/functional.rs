@@ -30,15 +30,12 @@ pub fn regions_to_boundaries(regions: &Array) -> Result<Array> {
 pub fn regions_to_durations(regions: &Array, max_n: Option<i32>) -> Result<Array> {
     let max_n = match max_n {
         Some(n) => n,
-        None => {
-            let max_val = regions.max(None)?;
-            max_val.eval()?;
-            max_val.item::<i32>()
-        }
+        None => regions.max(None)?.item::<i32>(),
     };
 
-    let idx_vec: Vec<i32> = (1..=max_n).collect();
-    let idx = Array::from_slice(&idx_vec, &[1, 1, max_n]);
+    let idx = Array::arange::<_, i32>(Some(1), max_n + 1, None)?;
+    let idx = mlx_rs::ops::expand_dims(&idx, 0)?;
+    let idx = mlx_rs::ops::expand_dims(&idx, 0)?;
 
     let regions_exp = mlx_rs::ops::expand_dims(regions, -1)?; // [B, T, 1]
     let eq = regions_exp.eq(&idx)?; // [B, T, N]
@@ -58,8 +55,8 @@ pub fn format_boundaries(durations: &Array, length: i32, timestep: f32) -> Resul
     let bf = boundary_frames.index((.., ..(n - 1)));
     let bf_exp = mlx_rs::ops::expand_dims(&bf, 1)?; // [B, 1, N-1]
 
-    let idx_vec: Vec<i32> = (0..length).collect();
-    let idx = Array::from_slice(&idx_vec, &[1, length, 1]); // [1, T, 1]
+    let idx = Array::arange::<_, i32>(None, length, None)?;
+    let idx = idx.reshape(&[1, length, 1])?;
 
     let eq = idx.eq(&bf_exp)?; // [B, T, N-1]
     let boundaries = eq.any_axes(&[-1], None)?; // [B, T]

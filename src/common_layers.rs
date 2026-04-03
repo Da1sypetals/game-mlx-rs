@@ -235,19 +235,14 @@ impl LocalDownsample {
     pub fn forward(&self, x: &Array, regions: &Array, max_n: Option<i32>) -> Result<Array> {
         let n = match max_n {
             Some(n) => n,
-            None => {
-                let max_val = regions.max(None)?;
-                max_val.eval()?;
-                max_val.item::<i32>()
-            }
+            None => regions.max(None)?.item::<i32>(),
         };
 
         let b_dims: Vec<i32> = std::iter::repeat(1).take(x.ndim() - 2).collect();
         let mut idx_shape = b_dims.clone();
         idx_shape.push(n + 1);
         idx_shape.push(1);
-        let idx_vec: Vec<i32> = (0..=n).collect();
-        let idx = Array::from_slice(&idx_vec, &idx_shape);
+        let idx = Array::arange::<_, i32>(None, n + 1, None)?.reshape(idx_shape.as_slice())?;
 
         let regions_exp = mlx_rs::ops::expand_dims(regions, -2)?;
         let region_map = idx.eq(&regions_exp)?;

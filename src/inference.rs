@@ -74,16 +74,14 @@ impl SegmentationEstimationInferenceModel {
         };
         let spectrogram = spectrogram.transpose_axes(&[0, 2, 1][..])?;
 
-        spectrogram.eval()?;
-
         let t_len = spectrogram.dim(1) as i32;
         let l = mlx_rs::ops::round(
             &(duration / &Array::from_f32(self.timestep)),
             None,
         )?.as_dtype(Dtype::Int32)?;
 
-        let idx_vec: Vec<i32> = (0..t_len).collect();
-        let idx = Array::from_slice(&idx_vec, &[1, t_len]);
+        let idx = Array::arange::<_, i32>(None, t_len, None)?;
+        let idx = mlx_rs::ops::expand_dims(&idx, 0)?;
         let l_exp = mlx_rs::ops::expand_dims(&l, -1)?;
         let mask = idx.lt(&l_exp)?;
 
@@ -209,7 +207,6 @@ impl SegmentationEstimationInferenceModel {
 
         let regions = boundaries_to_regions(&boundaries, Some(mask))?;
         let max_n_arr = regions.max(None)?;
-        max_n_arr.eval()?;
         let max_n = max_n_arr.item::<i32>();
         Ok((boundaries, regions, max_n))
     }
@@ -252,9 +249,9 @@ impl SegmentationEstimationInferenceModel {
         max_n: i32,
         threshold: f32,
     ) -> Result<(Array, Array)> {
-        let b = x_est.dim(0) as i32;
-        let idx_vec: Vec<i32> = (0..max_n).collect();
-        let idx = Array::from_slice(&idx_vec, &[1, max_n]);
+        let _b = x_est.dim(0) as i32;
+        let idx = Array::arange::<_, i32>(None, max_n, None)?;
+        let idx = mlx_rs::ops::expand_dims(&idx, 0)?;
 
         let max_idx = regions.max_axis(-1, Some(true))?;
         let n_mask = idx.lt(&max_idx)?;
@@ -315,16 +312,11 @@ impl SegmentationEstimationInferenceModel {
         let presence_flat = presence.index(0);
         let scores_flat = scores.index(0);
 
-        durations_flat.eval()?;
-        presence_flat.eval()?;
-        scores_flat.eval()?;
-
         let n = durations_flat.dim(0) as usize;
         let dur_vec: Vec<f32> = durations_flat.as_slice::<f32>().to_vec();
         let scores_vec: Vec<f32> = scores_flat.as_slice::<f32>().to_vec();
-        let presence_vec: Vec<bool> = (0..n)
-            .map(|i| presence_flat.index(i as i32).item::<bool>())
-            .collect();
+        let presence_vec: Vec<bool> = presence_flat.as_slice::<bool>().to_vec();
+        assert_eq!(presence_vec.len(), n);
 
         Ok((dur_vec, presence_vec, scores_vec))
     }

@@ -36,12 +36,10 @@ pub fn regions_to_local_positions_v3(regions: &Array) -> Result<Array> {
     let masked_segment_id = mlx_rs::ops::r#where(&is_start, &segment_id, &zeros_like_seg)?;
 
     let max_seg_arr = segment_id.max(None)?;
-    max_seg_arr.eval()?;
     let max_seg = max_seg_arr.item::<i32>() + 1;
 
     // seg_idx: [1, 1, S]
-    let seg_idx_vec: Vec<i32> = (0..max_seg).collect();
-    let seg_idx = Array::from_slice(&seg_idx_vec, &[1, 1, max_seg]);
+    let seg_idx = Array::arange::<_, i32>(None, max_seg, None)?.reshape(&[1, 1, max_seg])?;
 
     // masked_seg_exp: [B, T, 1]
     let masked_seg_exp = mlx_rs::ops::expand_dims(&masked_segment_id, -1)?;
@@ -123,8 +121,7 @@ pub fn build_join_attention_mask(
     let p = n * r;
 
     // pool_region: [B, P]
-    let arange_n_vec: Vec<i32> = (1..=n).collect();
-    let arange_n = Array::from_slice(&arange_n_vec, &[n]);
+    let arange_n = Array::arange::<_, i32>(Some(1), n + 1, None)?;
     let arange_n_col = arange_n.reshape(&[n, 1])?;
     let pool_region_nr = mlx_rs::ops::broadcast_to(&arange_n_col, &[n, r])?;
     let pool_region_row = pool_region_nr.reshape(&[1, p])?;
@@ -207,8 +204,7 @@ pub fn build_split_attention_masks(
     let p = n * r;
 
     // pool_region: [B, P]
-    let arange_n_vec: Vec<i32> = (1..=n).collect();
-    let arange_n = Array::from_slice(&arange_n_vec, &[n]);
+    let arange_n = Array::arange::<_, i32>(Some(1), n + 1, None)?;
     let arange_n_col = arange_n.reshape(&[n, 1])?;
     let pool_region_nr = mlx_rs::ops::broadcast_to(&arange_n_col, &[n, r])?;
     let pool_region_row = pool_region_nr.reshape(&[1, p])?;
@@ -261,7 +257,6 @@ pub fn build_split_attention_masks(
 
     // pp_mask: None if all pool_valid are true
     let all_pool = pool_valid.all(None)?;
-    all_pool.eval()?;
     let pp_mask = if all_pool.item::<bool>() {
         None
     } else {
@@ -269,7 +264,6 @@ pub fn build_split_attention_masks(
     };
 
     let all_t = t_mask.all(None)?;
-    all_t.eval()?;
     let xx_mask = if all_t.item::<bool>() {
         None
     } else {
@@ -1469,8 +1463,7 @@ impl JEBFBackbone {
         let p = n * r;
 
         // pool_region: [B, P]
-        let arange_n_vec: Vec<i32> = (1..=n).collect();
-        let arange_n = Array::from_slice(&arange_n_vec, &[n]);
+        let arange_n = Array::arange::<_, i32>(Some(1), n + 1, None)?;
         let arange_n_col = arange_n.reshape(&[n, 1])?;
         let pool_region_nr = mlx_rs::ops::broadcast_to(&arange_n_col, &[n, r])?;
         let pool_region_row = pool_region_nr.reshape(&[1, p])?;

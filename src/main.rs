@@ -138,6 +138,7 @@ fn main() -> Result<()> {
             wav
         };
 
+        let infer_start = std::time::Instant::now();
         let (durations, presence, scores) = model.infer(
             &wav,
             samplerate,
@@ -147,6 +148,14 @@ fn main() -> Result<()> {
             seg_radius_frames,
             cli.est_threshold,
         )?;
+        let infer_secs = infer_start.elapsed().as_secs_f64();
+        if std::env::var_os("GAME_BENCHMARK").is_some() {
+            eprintln!(
+                "GAME_BENCHMARK\t{}\t{:.6}",
+                audio_path.file_name().unwrap().to_string_lossy(),
+                infer_secs
+            );
+        }
 
         let out_path = cli.output_dir.join(
             audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".mid",
