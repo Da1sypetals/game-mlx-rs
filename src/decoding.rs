@@ -112,9 +112,7 @@ pub fn decode_gaussian_blurred_probs(
     let center_values = Array::linspace::<f32, f32>(min_val, max_val, Some(n))?
         .reshape(&idx_shape)?;
 
-    let sig_probs = mlx_rs::ops::sigmoid(probs)?;
-
-    let centers = argmax_axis(&sig_probs, -1, Some(true))?;
+    let centers = argmax_axis(probs, -1, Some(true))?;
 
     let zero = Array::from_int(0);
     let n_arr = Array::from_int(n);
@@ -128,7 +126,7 @@ pub fn decode_gaussian_blurred_probs(
     let idx_masks = ge_start.logical_and(&lt_end)?;
 
     let idx_masks_f = idx_masks.as_dtype(Dtype::Float32)?;
-    let weights = &sig_probs * &idx_masks_f;
+    let weights = probs * &idx_masks_f;
 
     let product_sum = &weights * &center_values;
     let product_sum = product_sum.sum_axis(-1, None)?;
@@ -137,7 +135,7 @@ pub fn decode_gaussian_blurred_probs(
     let eps = Array::from_f32(1e-8);
     let values = &product_sum / &(&weight_sum + &eps);
 
-    let max_probs = sig_probs.max_axis(-1, None)?;
+    let max_probs = probs.max_axis(-1, None)?;
     let presence = max_probs.ge(&Array::from_f32(threshold))?;
 
     Ok((values, presence))
