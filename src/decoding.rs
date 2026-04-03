@@ -34,7 +34,7 @@ pub fn find_local_extremum(
     radius: i32,
     maxima: bool,
 ) -> Result<Array> {
-    let inf_val = if maxima { f32::NEG_INFINITY } else { f32::INFINITY };
+    let inf_val = if maxima { f32::INFINITY } else { f32::NEG_INFINITY };
 
     let ndim = x.ndim();
     let mut pad_widths = vec![(0i32, 0i32); ndim];
@@ -73,20 +73,18 @@ pub fn decode_soft_boundaries(
     threshold: f32,
     radius: i32,
 ) -> Result<Array> {
-    let neg_inf = Array::from_f32(f32::NEG_INFINITY);
+    let pos_inf = Array::from_f32(f32::INFINITY);
     let mut b = boundaries.clone();
 
     if let Some(m) = mask {
-        let not_m = m.logical_not()?;
-        b = mlx_rs::ops::r#where(&not_m, &neg_inf, &b)?;
+        b = mlx_rs::ops::r#where(m, &b, &pos_inf)?;
     }
     if let Some(bar) = barriers {
-        b = mlx_rs::ops::r#where(bar, &neg_inf, &b)?;
+        let bar_fill = Array::full::<f32>(b.shape(), &pos_inf)?;
+        b = mlx_rs::ops::r#where(bar, &bar_fill, &b)?;
     }
 
-    let sig = mlx_rs::ops::sigmoid(&b)?;
-
-    let maxima = find_local_extremum(&sig, Some(threshold), radius, true)?;
+    let maxima = find_local_extremum(&b, Some(threshold), radius, true)?;
 
     if let Some(m) = mask {
         Ok(maxima.logical_and(m)?)

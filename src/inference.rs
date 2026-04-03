@@ -74,6 +74,8 @@ impl SegmentationEstimationInferenceModel {
         };
         let spectrogram = spectrogram.transpose_axes(&[0, 2, 1][..])?;
 
+        spectrogram.eval()?;
+
         let t_len = spectrogram.dim(1) as i32;
         let l = mlx_rs::ops::round(
             &(duration / &Array::from_f32(self.timestep)),

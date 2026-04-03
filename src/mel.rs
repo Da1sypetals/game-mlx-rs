@@ -132,25 +132,41 @@ pub fn resample(wav: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>> {
     Ok(output_data.into_iter().next().unwrap())
 }
 
-fn hz_to_mel(hz: f32) -> f32 {
-    2595.0 * (1.0 + hz / 700.0).log10()
+fn hz_to_mel_slaney(hz: f32) -> f32 {
+    const F_SP: f32 = 200.0 / 3.0;
+    const MIN_LOG_HZ: f32 = 1000.0;
+    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;  // 15.0
+    const LOG_STEP: f32 = 0.06875177742094912; // ln(6.4) / 27.0
+    if hz >= MIN_LOG_HZ {
+        MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / LOG_STEP
+    } else {
+        hz / F_SP
+    }
 }
 
-fn mel_to_hz(mel: f32) -> f32 {
-    700.0 * (10.0_f32.powf(mel / 2595.0) - 1.0)
+fn mel_to_hz_slaney(mel: f32) -> f32 {
+    const F_SP: f32 = 200.0 / 3.0;
+    const MIN_LOG_HZ: f32 = 1000.0;
+    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;
+    const LOG_STEP: f32 = 0.06875177742094912;
+    if mel >= MIN_LOG_MEL {
+        MIN_LOG_HZ * (LOG_STEP * (mel - MIN_LOG_MEL)).exp()
+    } else {
+        F_SP * mel
+    }
 }
 
 pub fn mel_filterbank(sr: i32, n_fft: i32, n_mels: i32, fmin: f32, fmax: f32) -> Result<Array> {
     let n_freqs = n_fft / 2 + 1;
 
-    let fmin_mel = hz_to_mel(fmin);
-    let fmax_mel = hz_to_mel(fmax);
+    let fmin_mel = hz_to_mel_slaney(fmin);
+    let fmax_mel = hz_to_mel_slaney(fmax);
 
     let mel_points: Vec<f32> = (0..n_mels + 2)
         .map(|i| fmin_mel + (fmax_mel - fmin_mel) * i as f32 / (n_mels + 1) as f32)
         .collect();
 
-    let hz_points: Vec<f32> = mel_points.iter().map(|&m| mel_to_hz(m)).collect();
+    let hz_points: Vec<f32> = mel_points.iter().map(|&m| mel_to_hz_slaney(m)).collect();
 
     let fft_freqs: Vec<f32> = (0..n_freqs)
         .map(|i| i as f32 * sr as f32 / n_fft as f32)
@@ -216,8 +232,8 @@ fn reflect_pad_1d(y: &Array, pad_before: i32, pad_after: i32) -> Result<Array> {
 fn hann_window(size: i32) -> Result<Array> {
     let n: Vec<f32> = (0..size).map(|i| i as f32).collect();
     let n = Array::from_slice(&n, &[size]);
-    let two_pi_over_nm1 = 2.0 * std::f32::consts::PI / (size - 1) as f32;
-    let arg = &n * Array::from_f32(two_pi_over_nm1);
+    let two_pi_over_n = 2.0 * std::f32::consts::PI / size as f32;
+    let arg = &n * Array::from_f32(two_pi_over_n);
     let cos_val = mlx_rs::ops::cos(&arg)?;
     let window = Array::from_f32(0.5) - &cos_val * Array::from_f32(0.5);
     Ok(window)
