@@ -1,0 +1,160 @@
+mod config;
+mod mel;
+mod functional;
+mod d3pm;
+mod decoding;
+mod common_layers;
+mod rope;
+mod eglu;
+mod ebf;
+mod jebf;
+mod midi_extraction;
+mod inference;
+mod midi;
+
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(name = "game-mlxrs", about = "GAME MIDI extraction in Rust + MLX")]
+struct Cli {
+    /// Audio file or directory path
+    path: PathBuf,
+
+    /// Path to MLX .safetensors weights file
+    #[arg(short = 'w', long)]
+    weights: PathBuf,
+
+    /// Path to GAME config.yaml
+    #[arg(short = 'c', long)]
+    config: PathBuf,
+
+    /// Language code (e.g. zh)
+    #[arg(short = 'l', long)]
+    language: Option<String>,
+
+    /// Output directory
+    #[arg(short = 'o', long, default_value = "output")]
+    output_dir: PathBuf,
+
+    /// D3PM start T
+    #[arg(long, default_value_t = 0.0)]
+    t0: f32,
+
+    /// D3PM steps
+    #[arg(long, default_value_t = 8)]
+    nsteps: i32,
+
+    /// Segmentation boundary threshold
+    #[arg(long, default_value_t = 0.2)]
+    seg_threshold: f32,
+
+    /// Segmentation boundary radius (seconds)
+    #[arg(long, default_value_t = 0.02)]
+    seg_radius: f32,
+
+    /// Estimation score threshold
+    #[arg(long, default_value_t = 0.2)]
+    est_threshold: f32,
+
+    /// MIDI tempo (BPM)
+    #[arg(long, default_value_t = 120.0)]
+    tempo: f32,
+
+    /// Comma-separated input audio formats
+    #[arg(long, default_value = "wav,flac,mp3,aac,ogg,m4a")]
+    input_formats: String,
+}
+
+fn d3pm_ts(t0: f32, nsteps: i32) -> Vec<f32> {
+    let step = (1.0 - t0) / nsteps as f32;
+    (0..nsteps).map(|i| t0 + i as f32 * step).collect()
+}
+
+fn get_language_id(
+    language: &Option<String>,
+    lang_map: &Option<std::collections::HashMap<String, i32>>,
+) -> i32 {
+    match (language, lang_map) {
+        (Some(lang), Some(map)) => {
+            *map.get(lang.as_str())
+                .unwrap_or_else(|| panic!("Language '{}' not in lang_map. Available: {:?}", lang, map.keys().collect::<Vec<_>>()))
+        }
+        _ => 0,
+    }
+}
+
+fn collect_audio_files(path: &std::path::Path, extensions: &std::collections::HashSet<String>) -> Vec<PathBuf> {
+    if path.is_file() {
+        return vec![path.to_path_buf()];
+    }
+    let mut files = Vec::new();
+    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(ext) = p.extension() {
+                if extensions.contains(&ext.to_string_lossy().to_lowercase()) {
+                    files.push(p.to_path_buf());
+                }
+            }
+        }
+    }
+    files
+}
+
+fn main() -> Result<()> {
+    env_logger::init();
+    let cli = Cli::parse();
+
+    let extensions: std::collections::HashSet<String> = cli
+        .input_formats
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .collect();
+
+    let audio_files = collect_audio_files(&cli.path, &extensions);
+    if audio_files.is_empty() {
+        anyhow::bail!("No audio files found at {:?}", cli.path);
+    }
+
+    std::fs::create_dir_all(&cli.output_dir)?;
+
+    let (mut model, lang_map) = inference::load_model(&cli.weights, &cli.config)?;
+    let language_id = get_language_id(&cli.language, &lang_map);
+    let samplerate = model.inference_config.features.audio_sample_rate;
+    let timestep = model.inference_config.features.timestep();
+    let seg_radius_frames = (cli.seg_radius / timestep).round() as i32;
+    let ts = d3pm_ts(cli.t0, cli.nsteps);
+
+    for audio_path in &audio_files {
+        log::info!("Processing {} ...", audio_path.display());
+
+        let (wav, sr) = mel::load_audio(audio_path)?;
+        let wav = if sr != samplerate as u32 {
+            mel::resample(&wav, sr, samplerate as u32)?
+        } else {
+            wav
+        };
+
+        let (durations, presence, scores) = model.infer(
+            &wav,
+            samplerate,
+            language_id,
+            &ts,
+            cli.seg_threshold,
+            seg_radius_frames,
+            cli.est_threshold,
+        )?;
+
+        let out_path = cli.output_dir.join(
+            audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".mid",
+        );
+        midi::save_midi(&out_path, &durations, &presence, &scores, cli.tempo)?;
+        log::info!("  -> Saved to {}", out_path.display());
+    }
+
+    log::info!("Done.");
+    Ok(())
+}
