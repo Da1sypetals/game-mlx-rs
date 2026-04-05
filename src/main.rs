@@ -11,11 +11,27 @@ mod jebf;
 mod midi_extraction;
 mod inference;
 mod midi;
+mod score_json;
 
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+
+#[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
+enum OutputFormat {
+    Json,
+    Midi,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputFormat::Json => write!(f, "json"),
+            OutputFormat::Midi => write!(f, "midi"),
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "game-mlxrs", about = "GAME MIDI extraction in Rust + MLX")]
@@ -38,6 +54,10 @@ struct Cli {
     /// Output directory
     #[arg(short = 'o', long, default_value = "output")]
     output_dir: PathBuf,
+
+    /// Output format(s): json, midi (can be specified multiple times)
+    #[arg(short = 'f', long = "output-format", value_enum, default_values = ["json", "midi"])]
+    output_formats: Vec<OutputFormat>,
 
     /// D3PM start T
     #[arg(long, default_value_t = 0.0)]
@@ -157,11 +177,21 @@ fn main() -> Result<()> {
             );
         }
 
-        let out_path = cli.output_dir.join(
-            audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".mid",
-        );
-        midi::save_midi(&out_path, &durations, &presence, &scores, cli.tempo)?;
-        log::info!("  -> Saved to {}", out_path.display());
+        if cli.output_formats.contains(&OutputFormat::Json) {
+            let json_path = cli.output_dir.join(
+                audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".json",
+            );
+            score_json::save_json(&json_path, &durations, &presence, &scores)?;
+            log::info!("  -> Saved to {}", json_path.display());
+        }
+
+        if cli.output_formats.contains(&OutputFormat::Midi) {
+            let midi_path = cli.output_dir.join(
+                audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".mid",
+            );
+            midi::save_midi(&midi_path, &durations, &presence, &scores, cli.tempo)?;
+            log::info!("  -> Saved to {}", midi_path.display());
+        }
     }
 
     log::info!("Done.");
