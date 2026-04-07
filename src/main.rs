@@ -1,17 +1,4 @@
-mod config;
-mod mel;
-mod functional;
-mod d3pm;
-mod decoding;
-mod common_layers;
-mod rope;
-mod eglu;
-mod ebf;
-mod jebf;
-mod midi_extraction;
-mod inference;
-mod midi;
-mod score_json;
+use game_mlxrs::{midi, score_json, GameVocalTranscriber};
 
 use std::path::PathBuf;
 
@@ -88,24 +75,6 @@ struct Cli {
     input_formats: String,
 }
 
-fn d3pm_ts(t0: f32, nsteps: i32) -> Vec<f32> {
-    let step = (1.0 - t0) / nsteps as f32;
-    (0..nsteps).map(|i| t0 + i as f32 * step).collect()
-}
-
-fn get_language_id(
-    language: &Option<String>,
-    lang_map: &Option<std::collections::HashMap<String, i32>>,
-) -> i32 {
-    match (language, lang_map) {
-        (Some(lang), Some(map)) => {
-            *map.get(lang.as_str())
-                .unwrap_or_else(|| panic!("Language '{}' not in lang_map. Available: {:?}", lang, map.keys().collect::<Vec<_>>()))
-        }
-        _ => 0,
-    }
-}
-
 fn collect_audio_files(path: &std::path::Path, extensions: &std::collections::HashSet<String>) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
@@ -141,34 +110,23 @@ fn main() -> Result<()> {
 
     std::fs::create_dir_all(&cli.output_dir)?;
 
-    let (mut model, lang_map) = inference::load_model(&cli.weights, &cli.config)?;
-    let language_id = get_language_id(&cli.language, &lang_map);
-    let samplerate = model.inference_config.features.audio_sample_rate;
-    let timestep = model.inference_config.features.timestep();
-    let seg_radius_frames = (cli.seg_radius / timestep).round() as i32;
-    let ts = d3pm_ts(cli.t0, cli.nsteps);
+    let mut transcriber = GameVocalTranscriber::new(&cli.weights, &cli.config);
+    transcriber.t0 = cli.t0;
+    transcriber.nsteps = cli.nsteps;
+    transcriber.seg_threshold = cli.seg_threshold;
+    transcriber.seg_radius = cli.seg_radius;
+    transcriber.est_threshold = cli.est_threshold;
+    transcriber.load()?;
+
+    let language = cli.language.as_deref();
 
     for audio_path in &audio_files {
         log::info!("Processing {} ...", audio_path.display());
 
-        let (wav, sr) = mel::load_audio(audio_path)?;
-        let wav = if sr != samplerate as u32 {
-            mel::resample(&wav, sr, samplerate as u32)?
-        } else {
-            wav
-        };
-
         let infer_start = std::time::Instant::now();
-        let (durations, presence, scores) = model.infer(
-            &wav,
-            samplerate,
-            language_id,
-            &ts,
-            cli.seg_threshold,
-            seg_radius_frames,
-            cli.est_threshold,
-        )?;
+        let notes = transcriber.transcribe_with_language(audio_path, language)?;
         let infer_secs = infer_start.elapsed().as_secs_f64();
+
         if std::env::var_os("GAME_BENCHMARK").is_some() {
             eprintln!(
                 "GAME_BENCHMARK\t{}\t{:.6}",
@@ -176,6 +134,9 @@ fn main() -> Result<()> {
                 infer_secs
             );
         }
+
+        // Convert notes back to raw (durations, presence, scores) for existing save functions
+        let (durations, presence, scores) = game_mlxrs::notes_to_raw(&notes);
 
         if cli.output_formats.contains(&OutputFormat::Json) {
             let json_path = cli.output_dir.join(
