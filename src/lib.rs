@@ -91,6 +91,27 @@ impl GameVocalTranscriber {
         self.transcribe_with_language(audio_path, None)
     }
 
+    /// Transcribe and quantize pitches to semitones.
+    ///
+    /// - `weighted=true`: find the optimal pitch delta that minimizes
+    ///   duration-weighted quantization error, then round each pitch.
+    ///   Longer notes have more influence on the optimal delta.
+    /// - `weighted=false`: all notes have equal weight (1.0) when
+    ///   finding the optimal pitch delta.
+    pub fn transcribe_quantized(
+        &mut self,
+        audio_path: impl AsRef<Path>,
+        language: Option<&str>,
+        weighted: bool,
+    ) -> Result<Vec<Note>> {
+        let mut notes = self.transcribe_with_language(audio_path, language)?;
+        let delta = find_pitch_delta(&notes, weighted);
+        for note in &mut notes {
+            note.pitch = (note.pitch + delta).round();
+        }
+        Ok(notes)
+    }
+
     /// Transcribe with an explicit language code (e.g. `"zh"`).
     pub fn transcribe_with_language(
         &mut self,
@@ -199,6 +220,74 @@ fn durations_to_notes(durations: &[f32], presence: &[bool], scores: &[f32]) -> V
         cursor = offset;
     }
     notes
+}
+
+/// Find optimal pitch delta (in semitones) that minimizes quantization error.
+///
+/// The algorithm evaluates candidate deltas at:
+/// - Points where some pitch would quantize to exactly an integer (zero error)
+/// - Breakpoints where the cost function's derivative changes (half-integer crossings)
+///
+/// When `weighted` is true, longer notes contribute more to the cost.
+/// When `weighted` is false, all notes have equal weight.
+fn find_pitch_delta(notes: &[Note], weighted: bool) -> f32 {
+    if notes.is_empty() {
+        return 0.0;
+    }
+
+    let n = notes.len();
+    let pitches: Vec<f32> = notes.iter().map(|n| n.pitch).collect();
+    let weights: Vec<f32> = if weighted {
+        notes.iter().map(|n| n.offset - n.onset).collect()
+    } else {
+        vec![1.0; n]
+    };
+
+    // Candidate deltas: values where some pitch has zero quantization error
+    // i.e. p + delta = round(p + delta) => delta = k - p for integer k
+    // Normalized to [-0.5, 0.5): candidate = -frac(p), mapped to principal range
+    let mut candidates: Vec<f32> = Vec::with_capacity(2 * n + 1);
+    for &p in &pitches {
+        let frac = p - p.floor();
+        let c = -frac;
+        candidates.push(normalize_delta(c));
+    }
+
+    // Breakpoints: half-integer crossings where derivative changes
+    // i.e. p + delta = n + 0.5 => delta = n + 0.5 - p
+    for &p in &pitches {
+        let frac = p - p.floor();
+        let bp = 0.5 - frac;
+        candidates.push(normalize_delta(bp));
+    }
+
+    candidates.push(0.0);
+
+    let mut best_delta = 0.0;
+    let mut best_cost = f32::INFINITY;
+
+    for &d in &candidates {
+        let mut cost = 0.0f32;
+        for i in 0..n {
+            let shifted = pitches[i] + d;
+            let err = (shifted - shifted.round()).abs();
+            cost += weights[i] * err;
+        }
+        if cost < best_cost {
+            best_cost = cost;
+            best_delta = d;
+        }
+    }
+
+    best_delta
+}
+
+/// Normalize delta to [-0.5, 0.5) range.
+#[inline]
+fn normalize_delta(d: f32) -> f32 {
+    let v = d + 0.5;
+    let normalized = if v >= 0.0 { v % 1.0 } else { 1.0 + (v % 1.0) };
+    normalized - 0.5
 }
 
 /// Convert a `Vec<Note>` back to `(durations, presence, scores)` as expected by
