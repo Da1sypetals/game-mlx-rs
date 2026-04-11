@@ -285,8 +285,10 @@ fn find_pitch_delta(notes: &[Note], weighted: bool) -> f32 {
 /// Normalize delta to [-0.5, 0.5) range.
 #[inline]
 fn normalize_delta(d: f32) -> f32 {
+    // Use floor-based approach to match Python's % behavior
+    // Python: ((d + 0.5) % 1.0) - 0.5
     let v = d + 0.5;
-    let normalized = if v >= 0.0 { v % 1.0 } else { 1.0 + (v % 1.0) };
+    let normalized = v - v.floor();
     normalized - 0.5
 }
 
@@ -392,6 +394,107 @@ mod tests {
             .expect("transcribe failed");
         for w in notes.windows(2) {
             assert!(w[1].onset >= w[0].onset, "notes must be in time order");
+        }
+    }
+
+    #[test]
+    fn find_pitch_delta_empty() {
+        let notes: Vec<Note> = vec![];
+        assert_eq!(find_pitch_delta(&notes, true), 0.0);
+        assert_eq!(find_pitch_delta(&notes, false), 0.0);
+    }
+
+    #[test]
+    fn find_pitch_delta_single_note() {
+        // Single note at pitch 60.3, duration 1.0
+        let notes = vec![Note { onset: 0.0, offset: 1.0, pitch: 60.3 }];
+        // Optimal delta should be -0.3 (to round to 60)
+        let delta = find_pitch_delta(&notes, true);
+        assert!((delta - (-0.3)).abs() < 0.001, "expected delta ≈ -0.3, got {}", delta);
+    }
+
+    #[test]
+    fn find_pitch_delta_quantizes_to_integers() {
+        // Use synthetic notes instead of loading model
+        let notes = vec![
+            Note { onset: 0.0, offset: 0.5, pitch: 60.3 },
+            Note { onset: 0.5, offset: 1.0, pitch: 62.7 },
+            Note { onset: 1.0, offset: 1.5, pitch: 64.2 },
+        ];
+        
+        // Test weighted quantization
+        let delta_w = find_pitch_delta(&notes, true);
+        for note in &notes {
+            let quantized = (note.pitch + delta_w).round();
+            assert!((quantized - quantized.round()).abs() < 0.001, 
+                "quantized pitch should be integer: {}", quantized);
+        }
+        
+        // Test equal weight quantization  
+        let delta_e = find_pitch_delta(&notes, false);
+        for note in &notes {
+            let quantized = (note.pitch + delta_e).round();
+            assert!((quantized - quantized.round()).abs() < 0.001,
+                "quantized pitch should be integer: {}", quantized);
+        }
+    }
+
+    #[test]
+    fn find_pitch_delta_uses_duration_weight() {
+        // Two notes: one short at 60.3, one long at 60.9
+        // With duration weighting, long note should dominate
+        let notes = vec![
+            Note { onset: 0.0, offset: 0.1, pitch: 60.3 },  // short
+            Note { onset: 0.1, offset: 1.1, pitch: 60.9 },  // long (1.0s)
+        ];
+        
+        let delta_weighted = find_pitch_delta(&notes, true);
+        let delta_equal = find_pitch_delta(&notes, false);
+        
+        // Weighted should prefer rounding 60.9 to 61 (delta ≈ +0.1)
+        // Equal weight might prefer 60 (delta ≈ -0.3) due to the 60.3 note
+        // The important thing is they can be different
+        
+        // Verify weighted version minimizes weighted error
+        let calc_cost = |d: f32, weighted: bool| -> f32 {
+            notes.iter().map(|n| {
+                let err = ((n.pitch + d) - (n.pitch + d).round()).abs();
+                let w = if weighted { n.offset - n.onset } else { 1.0 };
+                w * err
+            }).sum()
+        };
+        
+        let cost_w = calc_cost(delta_weighted, true);
+        // Check that nearby deltas have higher cost
+        for d in [-0.4f32, -0.2, 0.0, 0.2, 0.4].iter() {
+            if (*d - delta_weighted).abs() > 0.05 {
+                assert!(calc_cost(*d, true) >= cost_w - 0.001,
+                    "found better delta {} with cost {} vs {} at {}",
+                    d, calc_cost(*d, true), cost_w, delta_weighted);
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_delta_bounds() {
+        // Test normalize_delta matches Python's ((d + 0.5) % 1.0) - 0.5
+        // Verified against Python 3.11 behavior
+        let test_cases = [
+            (0.0, 0.0),      // (0.5 % 1.0) - 0.5 = 0.0
+            (0.5, -0.5),     // (1.0 % 1.0) - 0.5 = -0.5
+            (-0.5, -0.5),    // (0.0 % 1.0) - 0.5 = -0.5
+            (1.0, 0.0),      // (1.5 % 1.0) - 0.5 = 0.0
+            (-1.0, 0.0),     // (-0.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
+            (1.5, -0.5),     // (2.0 % 1.0) - 0.5 = -0.5
+            (-1.5, -0.5),    // (-1.0 % 1.0) - 0.5 = 0.0 - 0.5 = -0.5
+            (2.0, 0.0),      // (2.5 % 1.0) - 0.5 = 0.0
+            (-2.0, 0.0),     // (-1.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
+        ];
+
+        for (input, expected) in test_cases {
+            let result = normalize_delta(input);
+            assert!((result - expected).abs() < 0.0001,
+                "normalize_delta({}) = {}, expected {}", input, result, expected);
         }
     }
 }

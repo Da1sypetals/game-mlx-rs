@@ -73,6 +73,14 @@ struct Cli {
     /// Comma-separated input audio formats
     #[arg(long, default_value = "wav,flac,mp3,aac,ogg,m4a")]
     input_formats: String,
+
+    /// Quantize pitches to semitones (uses duration-weighted optimization)
+    #[arg(long)]
+    quantize: bool,
+
+    /// Use equal weighting for quantization (ignored if --quantize is not set)
+    #[arg(long)]
+    quantize_equal_weight: bool,
 }
 
 fn collect_audio_files(path: &std::path::Path, extensions: &std::collections::HashSet<String>) -> Vec<PathBuf> {
@@ -124,7 +132,12 @@ fn main() -> Result<()> {
         log::info!("Processing {} ...", audio_path.display());
 
         let infer_start = std::time::Instant::now();
-        let notes = transcriber.transcribe_with_language(audio_path, language)?;
+        let notes = if cli.quantize {
+            let weighted = !cli.quantize_equal_weight;
+            transcriber.transcribe_quantized(audio_path, language, weighted)?
+        } else {
+            transcriber.transcribe_with_language(audio_path, language)?
+        };
         let infer_secs = infer_start.elapsed().as_secs_f64();
 
         if std::env::var_os("GAME_BENCHMARK").is_some() {
