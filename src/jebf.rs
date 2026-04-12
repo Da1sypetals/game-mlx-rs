@@ -1,13 +1,13 @@
 use anyhow::Result;
-use mlx_rs::module::{Module, Param};
 use mlx_rs::Array;
 use mlx_rs::Dtype;
-use mlx_rs::nn;
 use mlx_rs::builder::Builder;
-use mlx_rs::ops::indexing::IndexOp;
 use mlx_rs::macros::ModuleParameters;
+use mlx_rs::module::{Module, Param};
+use mlx_rs::nn;
+use mlx_rs::ops::indexing::IndexOp;
 
-use crate::common_layers::{LayScale, RMSNorm, GLUFFN, CgMLP};
+use crate::common_layers::{CgMLP, GLUFFN, LayScale, RMSNorm};
 use crate::rope::RegionRoPE;
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,9 @@ pub fn regions_to_local_positions_v3(regions: &Array) -> Result<Array> {
 
     let zeros_like_cumsum = mlx_rs::ops::zeros::<i32>(&[b, t])?;
     let start_cumsum = mlx_rs::ops::r#where(&is_start, &cumsum, &zeros_like_cumsum)?;
-    let segment_id = is_start.as_dtype(Dtype::Int32)?.cumsum(Some(-1), None, None)?;
+    let segment_id = is_start
+        .as_dtype(Dtype::Int32)?
+        .cumsum(Some(-1), None, None)?;
 
     let zeros_like_seg = mlx_rs::ops::zeros::<i32>(&[b, t])?;
     let masked_segment_id = mlx_rs::ops::r#where(&is_start, &segment_id, &zeros_like_seg)?;
@@ -100,7 +102,10 @@ pub fn compute_positions_local(
     let regions_positive = regions.gt(&Array::from_int(0))?.as_dtype(Dtype::Int32)?;
     let x_pos = &(&x_local + &Array::from_int(r)) * &regions_positive;
 
-    Ok((pool_pos.as_dtype(Dtype::Float32)?, x_pos.as_dtype(Dtype::Float32)?))
+    Ok((
+        pool_pos.as_dtype(Dtype::Float32)?,
+        x_pos.as_dtype(Dtype::Float32)?,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -226,34 +231,35 @@ pub fn build_split_attention_masks(
         Ok(bias_4d)
     };
 
-    let cross_bias = |q_region: &Array, k_region: &Array, q_valid: &Array, k_valid: &Array| -> Result<Array> {
-        let qv_exp = mlx_rs::ops::expand_dims(q_valid, -1)?; // [B, Lq, 1]
-        let kv_exp = mlx_rs::ops::expand_dims(k_valid, -2)?; // [B, 1, Lk]
-        let pad_mask = qv_exp.logical_and(&kv_exp)?; // [B, Lq, Lk]
+    let cross_bias =
+        |q_region: &Array, k_region: &Array, q_valid: &Array, k_valid: &Array| -> Result<Array> {
+            let qv_exp = mlx_rs::ops::expand_dims(q_valid, -1)?; // [B, Lq, 1]
+            let kv_exp = mlx_rs::ops::expand_dims(k_valid, -2)?; // [B, 1, Lk]
+            let pad_mask = qv_exp.logical_and(&kv_exp)?; // [B, Lq, Lk]
 
-        if let Some(rb) = region_bias {
-            let pad_mask_4d = mlx_rs::ops::expand_dims(&pad_mask, 1)?; // [B, 1, Lq, Lk]
-            let zero = Array::from_f32(0.0);
-            let neg_val = Array::from_f32(-10000.0);
-            let pb = mlx_rs::ops::r#where(&pad_mask_4d, &zero, &neg_val)?;
-            let decay = rb.forward(q_region, k_region)?;
-            Ok(&pb + &decay)
-        } else {
-            let qr_exp = mlx_rs::ops::expand_dims(q_region, -1)?;
-            let kr_exp = mlx_rs::ops::expand_dims(k_region, -2)?;
-            let same_region = qr_exp.eq(&kr_exp)?;
-            let qr_nonzero = q_region.ne(&Array::from_int(0))?;
-            let kr_nonzero = k_region.ne(&Array::from_int(0))?;
-            let qnz = mlx_rs::ops::expand_dims(&qr_nonzero, -1)?;
-            let knz = mlx_rs::ops::expand_dims(&kr_nonzero, -2)?;
-            let non_pad = qnz.logical_and(&knz)?;
-            let valid_mask = pad_mask.logical_and(&same_region)?.logical_and(&non_pad)?;
-            let valid_mask_4d = mlx_rs::ops::expand_dims(&valid_mask, 1)?;
-            let zero = Array::from_f32(0.0);
-            let neg_val = Array::from_f32(-10000.0);
-            Ok(mlx_rs::ops::r#where(&valid_mask_4d, &zero, &neg_val)?)
-        }
-    };
+            if let Some(rb) = region_bias {
+                let pad_mask_4d = mlx_rs::ops::expand_dims(&pad_mask, 1)?; // [B, 1, Lq, Lk]
+                let zero = Array::from_f32(0.0);
+                let neg_val = Array::from_f32(-10000.0);
+                let pb = mlx_rs::ops::r#where(&pad_mask_4d, &zero, &neg_val)?;
+                let decay = rb.forward(q_region, k_region)?;
+                Ok(&pb + &decay)
+            } else {
+                let qr_exp = mlx_rs::ops::expand_dims(q_region, -1)?;
+                let kr_exp = mlx_rs::ops::expand_dims(k_region, -2)?;
+                let same_region = qr_exp.eq(&kr_exp)?;
+                let qr_nonzero = q_region.ne(&Array::from_int(0))?;
+                let kr_nonzero = k_region.ne(&Array::from_int(0))?;
+                let qnz = mlx_rs::ops::expand_dims(&qr_nonzero, -1)?;
+                let knz = mlx_rs::ops::expand_dims(&kr_nonzero, -2)?;
+                let non_pad = qnz.logical_and(&knz)?;
+                let valid_mask = pad_mask.logical_and(&same_region)?.logical_and(&non_pad)?;
+                let valid_mask_4d = mlx_rs::ops::expand_dims(&valid_mask, 1)?;
+                let zero = Array::from_f32(0.0);
+                let neg_val = Array::from_f32(-10000.0);
+                Ok(mlx_rs::ops::r#where(&valid_mask_4d, &zero, &neg_val)?)
+            }
+        };
 
     // pp_mask: None if all pool_valid are true
     let all_pool = pool_valid.all(None)?;
@@ -399,7 +405,11 @@ impl JointAttention {
         let x_norm = RMSNorm::new(dim, 1.0, 1e-6);
 
         let rope = if use_rope {
-            let rope_m = if rope_mode == "mixed" { "global" } else { "local" };
+            let rope_m = if rope_mode == "mixed" {
+                "global"
+            } else {
+                "local"
+            };
             Some(RegionRoPE::new(head_dim, rope_m, theta)?)
         } else {
             None
@@ -433,7 +443,8 @@ impl JointAttention {
         let (b, t) = (s[0], s[1]);
         let h = self.num_heads;
         let d = self.head_dim;
-        Ok(x.reshape(&[b, t, h, d])?.transpose_axes(&[0, 2, 1, 3][..])?)
+        Ok(x.reshape(&[b, t, h, d])?
+            .transpose_axes(&[0, 2, 1, 3][..])?)
     }
 
     pub fn forward(
@@ -519,18 +530,16 @@ impl JointAttention {
                         compute_positions_local(regions, r, n as i32, self.use_pool_offset)?;
                     let q_ridx = mlx_rs::ops::concatenate_axis(&[&pool_lpos, &x_lpos], -1)?;
 
-                    let (q_r, k_r) = rope.forward(
-                        &q, &k, &q_gpos, &q_gpos, Some(&q_ridx), Some(&q_ridx),
-                    )?;
+                    let (q_r, k_r) =
+                        rope.forward(&q, &k, &q_gpos, &q_gpos, Some(&q_ridx), Some(&q_ridx))?;
                     q = q_r;
                     k = k_r;
                 }
             }
         }
 
-        let out = mlx_rs::fast::scaled_dot_product_attention(
-            &q, &k, &v, self.scale, attn_mask, None,
-        )?;
+        let out =
+            mlx_rs::fast::scaled_dot_product_attention(&q, &k, &v, self.scale, attn_mask, None)?;
 
         // Split pool and x attention outputs
         let pool_attn_raw = out.index((.., .., ..p, ..));
@@ -549,7 +558,8 @@ impl JointAttention {
         let n_mask_exp = mlx_rs::ops::expand_dims(n_mask, -1)?;
         let pool_mask_bnr = mlx_rs::ops::broadcast_to(&n_mask_exp, &[b, n as i32, r])?;
         let pool_mask_bp = pool_mask_bnr.reshape(&[b, p])?;
-        let pool_mask_exp = mlx_rs::ops::expand_dims(&pool_mask_bp, -1)?.as_dtype(Dtype::Float32)?;
+        let pool_mask_exp =
+            mlx_rs::ops::expand_dims(&pool_mask_bp, -1)?.as_dtype(Dtype::Float32)?;
         let pool_o = &pool_attn * &pool_mask_exp;
 
         let t_mask_exp = mlx_rs::ops::expand_dims(t_mask, -1)?.as_dtype(Dtype::Float32)?;
@@ -630,7 +640,11 @@ impl SplitJointAttention {
         let x_merge = nn::LinearBuilder::new(attn_dim * 2, dim).build()?;
 
         let rope = if use_rope {
-            let rope_m = if rope_mode == "mixed" { "global" } else { "local" };
+            let rope_m = if rope_mode == "mixed" {
+                "global"
+            } else {
+                "local"
+            };
             Some(RegionRoPE::new(head_dim, rope_m, theta)?)
         } else {
             None
@@ -664,7 +678,8 @@ impl SplitJointAttention {
         let (b, t) = (s[0], s[1]);
         let h = self.num_heads;
         let d = self.head_dim;
-        Ok(x.reshape(&[b, t, h, d])?.transpose_axes(&[0, 2, 1, 3][..])?)
+        Ok(x.reshape(&[b, t, h, d])?
+            .transpose_axes(&[0, 2, 1, 3][..])?)
     }
 
     pub fn forward(
@@ -718,7 +733,8 @@ impl SplitJointAttention {
             if self.rope_mode == "local" {
                 let (pool_lpos, x_lpos) =
                     compute_positions_local(regions, r, n as i32, self.use_pool_offset)?;
-                let (pqr, pkr) = rope.forward(&pool_q, &pool_k, &pool_lpos, &pool_lpos, None, None)?;
+                let (pqr, pkr) =
+                    rope.forward(&pool_q, &pool_k, &pool_lpos, &pool_lpos, None, None)?;
                 let (xqr, xkr) = rope.forward(&x_q, &x_k, &x_lpos, &x_lpos, None, None)?;
                 pool_q_r = pqr;
                 pool_k_r = pkr;
@@ -731,7 +747,8 @@ impl SplitJointAttention {
                 let x_pos_vec: Vec<f32> = (0..t as i32).map(|i| i as f32).collect();
                 let x_pos_1d = Array::from_slice(&x_pos_vec, &[1, t as i32]);
                 let x_pos = mlx_rs::ops::broadcast_to(&x_pos_1d, &[b, t as i32])?;
-                let (pqr, pkr) = rope.forward(&pool_q, &pool_k, &pool_pos, &pool_pos, None, None)?;
+                let (pqr, pkr) =
+                    rope.forward(&pool_q, &pool_k, &pool_pos, &pool_pos, None, None)?;
                 let (xqr, xkr) = rope.forward(&x_q, &x_k, &x_pos, &x_pos, None, None)?;
                 pool_q_r = pqr;
                 pool_k_r = pkr;
@@ -748,13 +765,15 @@ impl SplitJointAttention {
                 let (pool_lpos, x_lpos) =
                     compute_positions_local(regions, r, n as i32, self.use_pool_offset)?;
                 let (pqr, pkr) = rope.forward(
-                    &pool_q, &pool_k, &pool_gpos, &pool_gpos,
-                    Some(&pool_lpos), Some(&pool_lpos),
+                    &pool_q,
+                    &pool_k,
+                    &pool_gpos,
+                    &pool_gpos,
+                    Some(&pool_lpos),
+                    Some(&pool_lpos),
                 )?;
-                let (xqr, xkr) = rope.forward(
-                    &x_q, &x_k, &x_gpos, &x_gpos,
-                    Some(&x_lpos), Some(&x_lpos),
-                )?;
+                let (xqr, xkr) =
+                    rope.forward(&x_q, &x_k, &x_gpos, &x_gpos, Some(&x_lpos), Some(&x_lpos))?;
                 pool_q_r = pqr;
                 pool_k_r = pkr;
                 x_q_r = xqr;
@@ -768,29 +787,59 @@ impl SplitJointAttention {
         }
 
         // Four attention operations
-        let pp_mask_sdpa = attn_masks.pp.as_ref().map(mlx_rs::fast::ScaledDotProductAttentionMask::from);
+        let pp_mask_sdpa = attn_masks
+            .pp
+            .as_ref()
+            .map(mlx_rs::fast::ScaledDotProductAttentionMask::from);
         let pp_out = mlx_rs::fast::scaled_dot_product_attention(
-            &pool_q_r, &pool_k_r, &pool_v, self.scale,
-            pp_mask_sdpa, None,
+            &pool_q_r,
+            &pool_k_r,
+            &pool_v,
+            self.scale,
+            pp_mask_sdpa,
+            None,
         )?;
-        let xx_mask_sdpa = attn_masks.xx.as_ref().map(mlx_rs::fast::ScaledDotProductAttentionMask::from);
+        let xx_mask_sdpa = attn_masks
+            .xx
+            .as_ref()
+            .map(mlx_rs::fast::ScaledDotProductAttentionMask::from);
         let xx_out = mlx_rs::fast::scaled_dot_product_attention(
-            &x_q_r, &x_k_r, &x_v, self.scale,
-            xx_mask_sdpa, None,
+            &x_q_r,
+            &x_k_r,
+            &x_v,
+            self.scale,
+            xx_mask_sdpa,
+            None,
         )?;
         let px_out = mlx_rs::fast::scaled_dot_product_attention(
-            &pool_q_r, &x_k_r, &x_v, self.scale,
-            &attn_masks.px, None,
+            &pool_q_r,
+            &x_k_r,
+            &x_v,
+            self.scale,
+            &attn_masks.px,
+            None,
         )?;
         let xp_out = mlx_rs::fast::scaled_dot_product_attention(
-            &x_q_r, &pool_k_r, &pool_v, self.scale,
-            &attn_masks.xp, None,
+            &x_q_r,
+            &pool_k_r,
+            &pool_v,
+            self.scale,
+            &attn_masks.xp,
+            None,
         )?;
 
-        let pp_flat = pp_out.transpose_axes(&[0, 2, 1, 3][..])?.reshape(&[b, p, h * d])?;
-        let px_flat = px_out.transpose_axes(&[0, 2, 1, 3][..])?.reshape(&[b, p, h * d])?;
-        let xx_flat = xx_out.transpose_axes(&[0, 2, 1, 3][..])?.reshape(&[b, t as i32, h * d])?;
-        let xp_flat = xp_out.transpose_axes(&[0, 2, 1, 3][..])?.reshape(&[b, t as i32, h * d])?;
+        let pp_flat = pp_out
+            .transpose_axes(&[0, 2, 1, 3][..])?
+            .reshape(&[b, p, h * d])?;
+        let px_flat = px_out
+            .transpose_axes(&[0, 2, 1, 3][..])?
+            .reshape(&[b, p, h * d])?;
+        let xx_flat = xx_out
+            .transpose_axes(&[0, 2, 1, 3][..])?
+            .reshape(&[b, t as i32, h * d])?;
+        let xp_flat = xp_out
+            .transpose_axes(&[0, 2, 1, 3][..])?
+            .reshape(&[b, t as i32, h * d])?;
 
         let pool_cat = mlx_rs::ops::concatenate_axis(&[&pp_flat, &px_flat], -1)?;
         let x_cat = mlx_rs::ops::concatenate_axis(&[&xx_flat, &xp_flat], -1)?;
@@ -802,7 +851,8 @@ impl SplitJointAttention {
         let n_mask_exp = mlx_rs::ops::expand_dims(n_mask, -1)?;
         let pool_mask_bnr = mlx_rs::ops::broadcast_to(&n_mask_exp, &[b, n as i32, r])?;
         let pool_mask_bp = pool_mask_bnr.reshape(&[b, p])?;
-        let pool_mask_exp = mlx_rs::ops::expand_dims(&pool_mask_bp, -1)?.as_dtype(Dtype::Float32)?;
+        let pool_mask_exp =
+            mlx_rs::ops::expand_dims(&pool_mask_bp, -1)?.as_dtype(Dtype::Float32)?;
         let pool_o = &pool_attn * &pool_mask_exp;
 
         let t_mask_exp = mlx_rs::ops::expand_dims(t_mask, -1)?.as_dtype(Dtype::Float32)?;
@@ -861,14 +911,28 @@ impl PJAC {
     ) -> Result<Self> {
         let (jattn, jattn_split) = if attn_type == "joint" {
             let ja = JointAttention::new(
-                dim, num_heads, head_dim, region_token_num, qk_norm,
-                use_rope, rope_mode, use_pool_offset, theta,
+                dim,
+                num_heads,
+                head_dim,
+                region_token_num,
+                qk_norm,
+                use_rope,
+                rope_mode,
+                use_pool_offset,
+                theta,
             )?;
             (Some(ja), None)
         } else {
             let sa = SplitJointAttention::new(
-                dim, num_heads, head_dim, region_token_num, qk_norm,
-                use_rope, rope_mode, use_pool_offset, theta,
+                dim,
+                num_heads,
+                head_dim,
+                region_token_num,
+                qk_norm,
+                use_rope,
+                rope_mode,
+                use_pool_offset,
+                theta,
             )?;
             (None, Some(sa))
         };
@@ -1068,11 +1132,19 @@ impl JEBF {
             };
 
         let attn = PJAC::new(
-            dim, num_heads, head_dim,
-            c_kernel_size_pool, m_kernel_size_pool,
-            c_kernel_size_x, m_kernel_size_x,
-            region_token_num, qk_norm,
-            use_rope, rope_mode, use_pool_offset, theta,
+            dim,
+            num_heads,
+            head_dim,
+            c_kernel_size_pool,
+            m_kernel_size_pool,
+            c_kernel_size_x,
+            m_kernel_size_x,
+            region_token_num,
+            qk_norm,
+            use_rope,
+            rope_mode,
+            use_pool_offset,
+            theta,
             attn_type,
         )?;
 
@@ -1170,7 +1242,9 @@ impl JEBF {
         x = Self::mfill_x(&x, t_mask)?;
         pool = Self::mfill_pool(&pool, &pool_mask)?;
 
-        let (p_o, x_o) = self.attn.forward_joint(&pool, &x, regions, t_mask, n_mask, attn_mask)?;
+        let (p_o, x_o) = self
+            .attn
+            .forward_joint(&pool, &x, regions, t_mask, n_mask, attn_mask)?;
         x = &Self::apply_ls(&self.lay_scale_jpac_x, &x_o)? + &x;
         pool = &Self::apply_ls(&self.lay_scale_jpac_pool, &p_o)? + &pool;
 
@@ -1228,7 +1302,9 @@ impl JEBF {
         x = Self::mfill_x(&x, t_mask)?;
         pool = Self::mfill_pool(&pool, &pool_mask)?;
 
-        let (p_o, x_o) = self.attn.forward_split(&pool, &x, regions, t_mask, n_mask, attn_masks)?;
+        let (p_o, x_o) = self
+            .attn
+            .forward_split(&pool, &x, regions, t_mask, n_mask, attn_masks)?;
         x = &Self::apply_ls(&self.lay_scale_jpac_x, &x_o)? + &x;
         pool = &Self::apply_ls(&self.lay_scale_jpac_pool, &p_o)? + &pool;
 
@@ -1408,12 +1484,22 @@ impl JEBFBackbone {
         let mut layers = Vec::with_capacity(num_layers as usize);
         for _ in 0..num_layers {
             layers.push(JEBF::new(
-                dim, num_heads, head_dim,
-                c_kernel_size_pool, m_kernel_size_pool,
-                c_kernel_size_x, m_kernel_size_x,
-                region_token_num, qk_norm,
-                use_rope, rope_mode, use_pool_offset, theta,
-                skip_first_ffn, skip_out_ffn, use_ls,
+                dim,
+                num_heads,
+                head_dim,
+                c_kernel_size_pool,
+                m_kernel_size_pool,
+                c_kernel_size_x,
+                m_kernel_size_x,
+                region_token_num,
+                qk_norm,
+                use_rope,
+                rope_mode,
+                use_pool_offset,
+                theta,
+                skip_first_ffn,
+                skip_out_ffn,
+                use_ls,
                 attn_type,
             )?);
         }
@@ -1496,11 +1582,8 @@ impl JEBFBackbone {
         let region_decay = rb.forward(&full_region, &full_region)?;
         let region_decay_3d = region_decay.squeeze_axes(&[1])?; // [B, L, L]
 
-        let attn_bias = mlx_rs::ops::r#where(
-            &same_stream,
-            &base_mask,
-            &(&base_mask + &region_decay_3d),
-        )?;
+        let attn_bias =
+            mlx_rs::ops::r#where(&same_stream, &base_mask, &(&base_mask + &region_decay_3d))?;
         let out = mlx_rs::ops::expand_dims(&attn_bias, 1)?; // [B, 1, L, L]
         Ok(out)
     }

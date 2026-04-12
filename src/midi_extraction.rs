@@ -1,10 +1,10 @@
 use anyhow::Result;
-use mlx_rs::module::Module;
 use mlx_rs::Array;
-use mlx_rs::nn;
 use mlx_rs::builder::Builder;
-use mlx_rs::ops::indexing::IndexOp;
 use mlx_rs::macros::ModuleParameters;
+use mlx_rs::module::Module;
+use mlx_rs::nn;
+use mlx_rs::ops::indexing::IndexOp;
 
 use crate::common_layers::CyclicRegionEmbedding;
 use crate::config::ModelConfig;
@@ -45,8 +45,7 @@ impl SegmentationEstimationModel {
     pub fn new(config: &ModelConfig) -> Result<Self> {
         let dim = config.embedding_dim;
 
-        let spectrogram_projection =
-            nn::LinearBuilder::new(config.in_dim, dim).build()?;
+        let spectrogram_projection = nn::LinearBuilder::new(config.in_dim, dim).build()?;
 
         let enc = &config.encoder.kwargs;
         let encoder = EBFBackbone::new(
@@ -66,8 +65,7 @@ impl SegmentationEstimationModel {
             false,
         )?;
 
-        let noise_embedding =
-            CyclicRegionEmbedding::new(dim, config.region_cycle_len)?;
+        let noise_embedding = CyclicRegionEmbedding::new(dim, config.region_cycle_len)?;
 
         let (time_linear1, time_linear2) = if config.mode == "d3pm" {
             (
@@ -105,8 +103,7 @@ impl SegmentationEstimationModel {
             false,
         )?;
 
-        let region_embedding =
-            CyclicRegionEmbedding::new(dim, config.region_cycle_len)?;
+        let region_embedding = CyclicRegionEmbedding::new(dim, config.region_cycle_len)?;
 
         let est = &config.estimator.kwargs;
         let estimator = JEBFBackbone::new(
@@ -178,10 +175,7 @@ impl SegmentationEstimationModel {
 
         if self.mode == "d3pm" {
             let t_val = t.unwrap();
-            let t_inp = mlx_rs::ops::expand_dims(
-                &mlx_rs::ops::expand_dims(t_val, -1)?,
-                -1,
-            )?;
+            let t_inp = mlx_rs::ops::expand_dims(&mlx_rs::ops::expand_dims(t_val, -1)?, -1)?;
             let t_emb = self.time_linear1.as_mut().unwrap().forward(&t_inp)?;
             let t_emb = nn::gelu(&t_emb)?;
             let t_emb = self.time_linear2.as_mut().unwrap().forward(&t_emb)?;
@@ -191,7 +185,11 @@ impl SegmentationEstimationModel {
         if self.use_language_embedding {
             let lang = language.unwrap();
             let lang_exp = mlx_rs::ops::expand_dims(lang, -1)?;
-            let lang_emb = self.language_embedding.as_mut().unwrap().forward(&lang_exp)?;
+            let lang_emb = self
+                .language_embedding
+                .as_mut()
+                .unwrap()
+                .forward(&lang_exp)?;
             h = &h + &lang_emb;
         }
 

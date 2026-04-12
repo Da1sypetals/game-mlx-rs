@@ -34,7 +34,11 @@ pub fn find_local_extremum(
     radius: i32,
     maxima: bool,
 ) -> Result<Array> {
-    let inf_val = if maxima { f32::INFINITY } else { f32::NEG_INFINITY };
+    let inf_val = if maxima {
+        f32::INFINITY
+    } else {
+        f32::NEG_INFINITY
+    };
 
     let ndim = x.ndim();
     let mut pad_widths = vec![(0i32, 0i32); ndim];
@@ -109,8 +113,8 @@ pub fn decode_gaussian_blurred_probs(
     idx_shape[ndim - 1] = n;
     let idx = Array::from_slice(&idx_vec, &idx_shape);
 
-    let center_values = Array::linspace::<f32, f32>(min_val, max_val, Some(n))?
-        .reshape(&idx_shape)?;
+    let center_values =
+        Array::linspace::<f32, f32>(min_val, max_val, Some(n))?.reshape(&idx_shape)?;
 
     let centers = argmax_axis(probs, -1, Some(true))?;
 

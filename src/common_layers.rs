@@ -1,12 +1,11 @@
 use anyhow::Result;
-use mlx_rs::module::{Module, Param};
-use mlx_rs::error::Exception;
 use mlx_rs::Array;
 use mlx_rs::Dtype;
-use mlx_rs::nn;
 use mlx_rs::builder::Builder;
-use mlx_rs::ops::indexing::IndexOp;
 use mlx_rs::macros::ModuleParameters;
+use mlx_rs::module::{Module, Param};
+use mlx_rs::nn;
+use mlx_rs::ops::indexing::IndexOp;
 
 // ---------------------------------------------------------------------------
 // LayScale
@@ -88,7 +87,11 @@ impl GLUFFN {
         let latent_dim = latent_dim.unwrap_or(dim * 4);
         let ln1 = nn::LinearBuilder::new(dim, latent_dim * 2).build()?;
         let ln2 = nn::LinearBuilder::new(latent_dim, dim).build()?;
-        Ok(Self { ln1, ln2, latent_dim })
+        Ok(Self {
+            ln1,
+            ln2,
+            latent_dim,
+        })
     }
 
     pub fn forward(&mut self, x: &Array) -> Result<Array> {
@@ -211,7 +214,10 @@ impl CyclicRegionEmbedding {
     pub fn new(embedding_dim: i32, cycle_length: i32) -> Result<Self> {
         let embedding = nn::Embedding::new(cycle_length, embedding_dim)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
-        Ok(Self { embedding, cycle_length })
+        Ok(Self {
+            embedding,
+            cycle_length,
+        })
     }
 
     pub fn forward(&mut self, idx: &Array) -> Result<Array> {
@@ -251,11 +257,8 @@ impl LocalDownsample {
         let has_region = region_map.any_axis(-1, Some(true))?;
         let region_size_raw = region_weight.sum_axis(-1, Some(true))?;
 
-        let region_size = mlx_rs::ops::r#where(
-            &has_region,
-            &region_size_raw,
-            &Array::from_f32(1.0),
-        )?;
+        let region_size =
+            mlx_rs::ops::r#where(&has_region, &region_size_raw, &Array::from_f32(1.0))?;
         let weight = &region_weight / &region_size;
         let weight = weight.index((.., 1.., ..));
         let x_down = weight.matmul(x)?;

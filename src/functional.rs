@@ -5,7 +5,10 @@ use mlx_rs::ops::indexing::IndexOp;
 
 /// [B, T] bool boundaries -> [B, T] int region indices starting at 1
 pub fn boundaries_to_regions(boundaries: &Array, mask: Option<&Array>) -> Result<Array> {
-    let regions = boundaries.as_dtype(Dtype::Int32)?.cumsum(Some(-1), None, None)? + Array::from_int(1);
+    let regions = boundaries
+        .as_dtype(Dtype::Int32)?
+        .cumsum(Some(-1), None, None)?
+        + Array::from_int(1);
     if let Some(m) = mask {
         Ok(&regions * m.as_dtype(Dtype::Int32)?)
     } else {
@@ -23,7 +26,12 @@ pub fn regions_to_boundaries(regions: &Array) -> Result<Array> {
     let ndim = regions.ndim();
     let mut pad_widths = vec![(0i32, 0i32); ndim];
     pad_widths[ndim - 1] = (1, 0);
-    Ok(mlx_rs::ops::pad(&diff, &pad_widths[..], None::<Array>, None)?)
+    Ok(mlx_rs::ops::pad(
+        &diff,
+        &pad_widths[..],
+        None::<Array>,
+        None,
+    )?)
 }
 
 /// Count frames per region. regions: [B, T], returns [B, N] frame counts.
@@ -48,7 +56,8 @@ pub fn regions_to_durations(regions: &Array, max_n: Option<i32>) -> Result<Array
 pub fn format_boundaries(durations: &Array, length: i32, timestep: f32) -> Result<Array> {
     let timestep_arr = Array::from_f32(timestep);
     let cum_dur = durations.cumsum(Some(1), None, None)?;
-    let boundary_frames = mlx_rs::ops::round(&(&cum_dur / &timestep_arr), None)?.as_dtype(Dtype::Int32)?;
+    let boundary_frames =
+        mlx_rs::ops::round(&(&cum_dur / &timestep_arr), None)?.as_dtype(Dtype::Int32)?;
 
     // Take all but last column: [B, N-1]
     let n = boundary_frames.dim(-1) as i32;

@@ -65,8 +65,8 @@ pub fn load_audio(path: &Path) -> Result<(Vec<f32>, u32)> {
     let channels = codec_params.channels.map(|c| c.count()).unwrap_or(1);
     let track_id = track.id;
 
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())?;
+    let mut decoder =
+        symphonia::default::get_codecs().make(&codec_params, &DecoderOptions::default())?;
 
     let mut all_samples: Vec<f32> = Vec::new();
 
@@ -104,8 +104,8 @@ pub fn load_audio(path: &Path) -> Result<(Vec<f32>, u32)> {
 }
 
 pub fn resample(wav: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>> {
-    use rubato::{Fft, FixedSync, Resampler};
     use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
+    use rubato::{Fft, FixedSync, Resampler};
 
     let chunk_size = 1024;
     let mut resampler = Fft::<f32>::new(
@@ -126,7 +126,8 @@ pub fn resample(wav: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>> {
     let mut output_data = vec![vec![0.0f32; output_len]; 1];
     let mut output = SequentialSliceOfVecs::new_mut(&mut output_data, 1, output_len)?;
 
-    let (_nbr_in, nbr_out) = resampler.process_all_into_buffer(&input, &mut output, input_len, None)?;
+    let (_nbr_in, nbr_out) =
+        resampler.process_all_into_buffer(&input, &mut output, input_len, None)?;
 
     output_data[0].truncate(nbr_out);
     Ok(output_data.into_iter().next().unwrap())
@@ -135,7 +136,7 @@ pub fn resample(wav: &[f32], from_sr: u32, to_sr: u32) -> Result<Vec<f32>> {
 fn hz_to_mel_slaney(hz: f32) -> f32 {
     const F_SP: f32 = 200.0 / 3.0;
     const MIN_LOG_HZ: f32 = 1000.0;
-    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP;  // 15.0
+    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15.0
     const LOG_STEP: f32 = 0.06875177742094912; // ln(6.4) / 27.0
     if hz >= MIN_LOG_HZ {
         MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / LOG_STEP
@@ -182,11 +183,9 @@ pub fn mel_filterbank(sr: i32, n_fft: i32, n_mels: i32, fmin: f32, fmax: f32) ->
         for k in 0..n_freqs as usize {
             let f = fft_freqs[k];
             if f >= f_left && f <= f_center {
-                weights[m * n_freqs as usize + k] =
-                    (f - f_left) / (f_center - f_left + 1e-10);
+                weights[m * n_freqs as usize + k] = (f - f_left) / (f_center - f_left + 1e-10);
             } else if f > f_center && f <= f_right {
-                weights[m * n_freqs as usize + k] =
-                    (f_right - f) / (f_right - f_center + 1e-10);
+                weights[m * n_freqs as usize + k] = (f_right - f) / (f_right - f_center + 1e-10);
             }
         }
     }
@@ -251,12 +250,8 @@ fn stft_forward(
     let n_frames = (len - win_length) / hop_length + 1;
 
     // Frame the signal using as_strided: [n_frames, win_length]
-    let y_strided = mlx_rs::ops::as_strided(
-        y,
-        &[n_frames, win_length],
-        &[hop_length as i64, 1],
-        0,
-    )?;
+    let y_strided =
+        mlx_rs::ops::as_strided(y, &[n_frames, win_length], &[hop_length as i64, 1], 0)?;
 
     // Apply window
     let windowed = &y_strided * window;
@@ -331,11 +326,7 @@ impl StretchableMelSpectrogram {
         let pad_before = (win_length - hop_length) / 2;
         let pad_after = (win_length - hop_length + 1) / 2;
 
-        let y_1d = if y.ndim() == 2 {
-            y.index(0)
-        } else {
-            y.clone()
-        };
+        let y_1d = if y.ndim() == 2 { y.index(0) } else { y.clone() };
 
         let y_padded = reflect_pad_1d(&y_1d, pad_before, pad_after)?;
 

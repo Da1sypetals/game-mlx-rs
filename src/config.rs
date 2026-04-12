@@ -81,15 +81,33 @@ pub struct BackboneKwargs {
     pub pool_merge_mode: String,
 }
 
-fn default_true() -> bool { true }
-fn default_kernel_31() -> i32 { 31 }
-fn default_kernel_7() -> i32 { 7 }
-fn default_kernel_5() -> i32 { 5 }
-fn default_latent_out_dim() -> i32 { 16 }
-fn default_one() -> i32 { 1 }
-fn default_attn_type() -> String { "joint".to_string() }
-fn default_rope_mode() -> String { "mixed".to_string() }
-fn default_pool_merge_mode() -> String { "mean".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_kernel_31() -> i32 {
+    31
+}
+fn default_kernel_7() -> i32 {
+    7
+}
+fn default_kernel_5() -> i32 {
+    5
+}
+fn default_latent_out_dim() -> i32 {
+    16
+}
+fn default_one() -> i32 {
+    1
+}
+fn default_attn_type() -> String {
+    "joint".to_string()
+}
+fn default_rope_mode() -> String {
+    "mixed".to_string()
+}
+fn default_pool_merge_mode() -> String {
+    "mean".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 pub struct InferenceConfig {

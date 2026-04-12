@@ -1,7 +1,7 @@
-use std::path::Path;
 use anyhow::Result;
-use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
 use midly::num::{u4, u7, u15, u24, u28};
+use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
+use std::path::Path;
 
 pub fn save_midi(
     output_path: &Path,

@@ -1,22 +1,22 @@
+pub mod common_layers;
 pub mod config;
-pub mod mel;
-pub mod functional;
 pub mod d3pm;
 pub mod decoding;
-pub mod common_layers;
-pub mod rope;
-pub mod eglu;
 pub mod ebf;
-pub mod jebf;
-pub mod midi_extraction;
+pub mod eglu;
+pub mod functional;
 pub mod inference;
+pub mod jebf;
+pub mod mel;
 pub mod midi;
+pub mod midi_extraction;
+pub mod rope;
 pub mod score_json;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// A single transcribed note with continuous (non-quantized) pitch.
 #[derive(Debug, Clone, PartialEq)]
@@ -196,10 +196,13 @@ fn d3pm_ts(t0: f32, nsteps: i32) -> Vec<f32> {
 
 fn get_language_id(language: Option<&str>, lang_map: Option<&HashMap<String, i32>>) -> i32 {
     match (language, lang_map) {
-        (Some(lang), Some(map)) => {
-            *map.get(lang)
-                .unwrap_or_else(|| panic!("Language '{}' not in lang_map. Available: {:?}", lang, map.keys().collect::<Vec<_>>()))
-        }
+        (Some(lang), Some(map)) => *map.get(lang).unwrap_or_else(|| {
+            panic!(
+                "Language '{}' not in lang_map. Available: {:?}",
+                lang,
+                map.keys().collect::<Vec<_>>()
+            )
+        }),
         _ => 0,
     }
 }
@@ -312,19 +315,22 @@ mod tests {
 
     fn weights_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("game-mlx/weights/GAME-1.0-large.safetensors")
     }
 
     fn config_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("GAME/models/GAME-1.0-large/config.yaml")
     }
 
     fn sample_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
+            .parent()
+            .unwrap()
             .join("samples/fswx.wav")
     }
 
@@ -373,24 +379,35 @@ mod tests {
     fn transcribe_returns_notes() {
         let mut t = GameVocalTranscriber::new(weights_path(), config_path());
         t.load().expect("load failed");
-        let notes = t.transcribe_with_language(sample_path(), Some("zh"))
+        let notes = t
+            .transcribe_with_language(sample_path(), Some("zh"))
             .expect("transcribe failed");
         assert!(!notes.is_empty(), "expected at least one note");
         for n in &notes {
             assert!(n.onset >= 0.0, "onset must be non-negative");
             assert!(n.offset > n.onset, "offset must be after onset");
-            assert!(n.pitch >= 0.0 && n.pitch <= 127.0, "pitch out of MIDI range: {}", n.pitch);
+            assert!(
+                n.pitch >= 0.0 && n.pitch <= 127.0,
+                "pitch out of MIDI range: {}",
+                n.pitch
+            );
             // pitch must be continuous (not necessarily an integer)
         }
-        let has_fractional = notes.iter().any(|n| (n.pitch - n.pitch.round()).abs() > 1e-3);
-        assert!(has_fractional, "expected at least some non-integer (continuous) pitch values");
+        let has_fractional = notes
+            .iter()
+            .any(|n| (n.pitch - n.pitch.round()).abs() > 1e-3);
+        assert!(
+            has_fractional,
+            "expected at least some non-integer (continuous) pitch values"
+        );
     }
 
     #[test]
     fn note_times_are_monotonic() {
         let mut t = GameVocalTranscriber::new(weights_path(), config_path());
         t.load().expect("load failed");
-        let notes = t.transcribe_with_language(sample_path(), Some("zh"))
+        let notes = t
+            .transcribe_with_language(sample_path(), Some("zh"))
             .expect("transcribe failed");
         for w in notes.windows(2) {
             assert!(w[1].onset >= w[0].onset, "notes must be in time order");
@@ -407,35 +424,61 @@ mod tests {
     #[test]
     fn find_pitch_delta_single_note() {
         // Single note at pitch 60.3, duration 1.0
-        let notes = vec![Note { onset: 0.0, offset: 1.0, pitch: 60.3 }];
+        let notes = vec![Note {
+            onset: 0.0,
+            offset: 1.0,
+            pitch: 60.3,
+        }];
         // Optimal delta should be -0.3 (to round to 60)
         let delta = find_pitch_delta(&notes, true);
-        assert!((delta - (-0.3)).abs() < 0.001, "expected delta ≈ -0.3, got {}", delta);
+        assert!(
+            (delta - (-0.3)).abs() < 0.001,
+            "expected delta ≈ -0.3, got {}",
+            delta
+        );
     }
 
     #[test]
     fn find_pitch_delta_quantizes_to_integers() {
         // Use synthetic notes instead of loading model
         let notes = vec![
-            Note { onset: 0.0, offset: 0.5, pitch: 60.3 },
-            Note { onset: 0.5, offset: 1.0, pitch: 62.7 },
-            Note { onset: 1.0, offset: 1.5, pitch: 64.2 },
+            Note {
+                onset: 0.0,
+                offset: 0.5,
+                pitch: 60.3,
+            },
+            Note {
+                onset: 0.5,
+                offset: 1.0,
+                pitch: 62.7,
+            },
+            Note {
+                onset: 1.0,
+                offset: 1.5,
+                pitch: 64.2,
+            },
         ];
-        
+
         // Test weighted quantization
         let delta_w = find_pitch_delta(&notes, true);
         for note in &notes {
             let quantized = (note.pitch + delta_w).round();
-            assert!((quantized - quantized.round()).abs() < 0.001, 
-                "quantized pitch should be integer: {}", quantized);
+            assert!(
+                (quantized - quantized.round()).abs() < 0.001,
+                "quantized pitch should be integer: {}",
+                quantized
+            );
         }
-        
-        // Test equal weight quantization  
+
+        // Test equal weight quantization
         let delta_e = find_pitch_delta(&notes, false);
         for note in &notes {
             let quantized = (note.pitch + delta_e).round();
-            assert!((quantized - quantized.round()).abs() < 0.001,
-                "quantized pitch should be integer: {}", quantized);
+            assert!(
+                (quantized - quantized.round()).abs() < 0.001,
+                "quantized pitch should be integer: {}",
+                quantized
+            );
         }
     }
 
@@ -444,33 +487,49 @@ mod tests {
         // Two notes: one short at 60.3, one long at 60.9
         // With duration weighting, long note should dominate
         let notes = vec![
-            Note { onset: 0.0, offset: 0.1, pitch: 60.3 },  // short
-            Note { onset: 0.1, offset: 1.1, pitch: 60.9 },  // long (1.0s)
+            Note {
+                onset: 0.0,
+                offset: 0.1,
+                pitch: 60.3,
+            }, // short
+            Note {
+                onset: 0.1,
+                offset: 1.1,
+                pitch: 60.9,
+            }, // long (1.0s)
         ];
-        
+
         let delta_weighted = find_pitch_delta(&notes, true);
         let delta_equal = find_pitch_delta(&notes, false);
-        
+
         // Weighted should prefer rounding 60.9 to 61 (delta ≈ +0.1)
         // Equal weight might prefer 60 (delta ≈ -0.3) due to the 60.3 note
         // The important thing is they can be different
-        
+
         // Verify weighted version minimizes weighted error
         let calc_cost = |d: f32, weighted: bool| -> f32 {
-            notes.iter().map(|n| {
-                let err = ((n.pitch + d) - (n.pitch + d).round()).abs();
-                let w = if weighted { n.offset - n.onset } else { 1.0 };
-                w * err
-            }).sum()
+            notes
+                .iter()
+                .map(|n| {
+                    let err = ((n.pitch + d) - (n.pitch + d).round()).abs();
+                    let w = if weighted { n.offset - n.onset } else { 1.0 };
+                    w * err
+                })
+                .sum()
         };
-        
+
         let cost_w = calc_cost(delta_weighted, true);
         // Check that nearby deltas have higher cost
         for d in [-0.4f32, -0.2, 0.0, 0.2, 0.4].iter() {
             if (*d - delta_weighted).abs() > 0.05 {
-                assert!(calc_cost(*d, true) >= cost_w - 0.001,
+                assert!(
+                    calc_cost(*d, true) >= cost_w - 0.001,
                     "found better delta {} with cost {} vs {} at {}",
-                    d, calc_cost(*d, true), cost_w, delta_weighted);
+                    d,
+                    calc_cost(*d, true),
+                    cost_w,
+                    delta_weighted
+                );
             }
         }
     }
@@ -480,21 +539,26 @@ mod tests {
         // Test normalize_delta matches Python's ((d + 0.5) % 1.0) - 0.5
         // Verified against Python 3.11 behavior
         let test_cases = [
-            (0.0, 0.0),      // (0.5 % 1.0) - 0.5 = 0.0
-            (0.5, -0.5),     // (1.0 % 1.0) - 0.5 = -0.5
-            (-0.5, -0.5),    // (0.0 % 1.0) - 0.5 = -0.5
-            (1.0, 0.0),      // (1.5 % 1.0) - 0.5 = 0.0
-            (-1.0, 0.0),     // (-0.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
-            (1.5, -0.5),     // (2.0 % 1.0) - 0.5 = -0.5
-            (-1.5, -0.5),    // (-1.0 % 1.0) - 0.5 = 0.0 - 0.5 = -0.5
-            (2.0, 0.0),      // (2.5 % 1.0) - 0.5 = 0.0
-            (-2.0, 0.0),     // (-1.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
+            (0.0, 0.0),   // (0.5 % 1.0) - 0.5 = 0.0
+            (0.5, -0.5),  // (1.0 % 1.0) - 0.5 = -0.5
+            (-0.5, -0.5), // (0.0 % 1.0) - 0.5 = -0.5
+            (1.0, 0.0),   // (1.5 % 1.0) - 0.5 = 0.0
+            (-1.0, 0.0),  // (-0.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
+            (1.5, -0.5),  // (2.0 % 1.0) - 0.5 = -0.5
+            (-1.5, -0.5), // (-1.0 % 1.0) - 0.5 = 0.0 - 0.5 = -0.5
+            (2.0, 0.0),   // (2.5 % 1.0) - 0.5 = 0.0
+            (-2.0, 0.0),  // (-1.5 % 1.0) - 0.5 = 0.5 - 0.5 = 0.0
         ];
 
         for (input, expected) in test_cases {
             let result = normalize_delta(input);
-            assert!((result - expected).abs() < 0.0001,
-                "normalize_delta({}) = {}, expected {}", input, result, expected);
+            assert!(
+                (result - expected).abs() < 0.0001,
+                "normalize_delta({}) = {}, expected {}",
+                input,
+                result,
+                expected
+            );
         }
     }
 }

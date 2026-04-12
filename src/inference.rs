@@ -23,10 +23,7 @@ pub struct SegmentationEstimationInferenceModel {
 }
 
 impl SegmentationEstimationInferenceModel {
-    pub fn new(
-        model_config: ModelConfig,
-        inference_config: InferenceConfig,
-    ) -> Result<Self> {
+    pub fn new(model_config: ModelConfig, inference_config: InferenceConfig) -> Result<Self> {
         let timestep = inference_config.features.timestep();
         let feat = &inference_config.features;
         let spec = &feat.spectrogram;
@@ -75,10 +72,8 @@ impl SegmentationEstimationInferenceModel {
         let spectrogram = spectrogram.transpose_axes(&[0, 2, 1][..])?;
 
         let t_len = spectrogram.dim(1) as i32;
-        let l = mlx_rs::ops::round(
-            &(duration / &Array::from_f32(self.timestep)),
-            None,
-        )?.as_dtype(Dtype::Int32)?;
+        let l = mlx_rs::ops::round(&(duration / &Array::from_f32(self.timestep)), None)?
+            .as_dtype(Dtype::Int32)?;
 
         let idx = Array::arange::<_, i32>(None, t_len, None)?;
         let idx = mlx_rs::ops::expand_dims(&idx, 0)?;
@@ -106,10 +101,7 @@ impl SegmentationEstimationInferenceModel {
         let t_exp;
         if self.model_config.mode == "d3pm" {
             let t_val = t.unwrap();
-            t_exp = mlx_rs::ops::broadcast_to(
-                &mlx_rs::ops::expand_dims(t_val, 0)?,
-                &[b],
-            )?;
+            t_exp = mlx_rs::ops::broadcast_to(&mlx_rs::ops::expand_dims(t_val, 0)?, &[b])?;
             let p = d3pm_time_schedule(&t_exp)?;
             boundaries = remove_mutable_boundaries(prev_boundaries, known_boundaries, &p)?;
         } else {
@@ -123,13 +115,9 @@ impl SegmentationEstimationInferenceModel {
         } else {
             None
         };
-        let (logits, _latent) = self.model.forward_segmentation(
-            x_seg,
-            &noise,
-            t_arg,
-            language,
-            Some(mask),
-        )?;
+        let (logits, _latent) =
+            self.model
+                .forward_segmentation(x_seg, &noise, t_arg, language, Some(mask))?;
 
         let soft_boundaries = mlx_rs::ops::sigmoid(&logits)?;
         let decoded = decode_soft_boundaries(
@@ -150,7 +138,9 @@ impl SegmentationEstimationInferenceModel {
         n_mask: &Array,
         threshold: f32,
     ) -> Result<(Array, Array)> {
-        let logits = self.model.forward_estimation(x_est, regions, t_mask, n_mask)?;
+        let logits = self
+            .model
+            .forward_estimation(x_est, regions, t_mask, n_mask)?;
         let probs = mlx_rs::ops::sigmoid(&logits)?;
         let (scores, presence) = decode_gaussian_blurred_probs(
             &probs,
@@ -235,8 +225,7 @@ impl SegmentationEstimationInferenceModel {
             t,
         )?;
 
-        let durations = regions_to_durations(&regions, Some(max_n))?
-            .as_dtype(Dtype::Float32)?
+        let durations = regions_to_durations(&regions, Some(max_n))?.as_dtype(Dtype::Float32)?
             * Array::from_f32(self.timestep);
         Ok((durations, regions, max_n))
     }
@@ -256,13 +245,8 @@ impl SegmentationEstimationInferenceModel {
         let max_idx = regions.max_axis(-1, Some(true))?;
         let n_mask = idx.lt(&max_idx)?;
 
-        let (presence, scores) = self.forward_and_decode_scores(
-            x_est,
-            regions,
-            mask,
-            &n_mask,
-            threshold,
-        )?;
+        let (presence, scores) =
+            self.forward_and_decode_scores(x_est, regions, mask, &n_mask, threshold)?;
         Ok((presence, scores))
     }
 
@@ -285,8 +269,7 @@ impl SegmentationEstimationInferenceModel {
         let language = Array::from_slice(&[language_id], &[1]);
 
         let waveform_duration = known_durations.sum_axis(1, None)?;
-        let (x_seg, x_est, mask) =
-            this.forward_encoder(&waveform, &waveform_duration)?;
+        let (x_seg, x_est, mask) = this.forward_encoder(&waveform, &waveform_duration)?;
 
         let (durations, regions, max_n) = this.forward_segmenter(
             &x_seg,
@@ -298,13 +281,8 @@ impl SegmentationEstimationInferenceModel {
             Some(ts),
         )?;
 
-        let (presence, scores) = this.forward_estimator(
-            &x_est,
-            &regions,
-            &mask,
-            max_n,
-            score_threshold,
-        )?;
+        let (presence, scores) =
+            this.forward_estimator(&x_est, &regions, &mask, max_n, score_threshold)?;
 
         mlx_rs::transforms::eval([&durations, &presence, &scores])?;
 
@@ -335,7 +313,10 @@ fn remap_safetensors_key(key: &str) -> String {
 pub fn load_model(
     weights_path: &Path,
     config_path: &Path,
-) -> Result<(SegmentationEstimationInferenceModel, Option<HashMap<String, i32>>)> {
+) -> Result<(
+    SegmentationEstimationInferenceModel,
+    Option<HashMap<String, i32>>,
+)> {
     let raw_config: RawConfig = crate::config::load_config(config_path)?;
 
     let lang_map = if raw_config.model.use_languages {
@@ -350,10 +331,8 @@ pub fn load_model(
         None
     };
 
-    let mut model = SegmentationEstimationInferenceModel::new(
-        raw_config.model,
-        raw_config.inference,
-    )?;
+    let mut model =
+        SegmentationEstimationInferenceModel::new(raw_config.model, raw_config.inference)?;
 
     log::info!("Loading weights from {} ...", weights_path.display());
     let loaded = mlx_rs::Array::load_safetensors(weights_path)
@@ -400,7 +379,9 @@ pub fn load_model(
         }
     }
 
-    model.model.eval()
+    model
+        .model
+        .eval()
         .map_err(|e| anyhow::anyhow!("Failed to eval model: {}", e))?;
     log::info!("Weights loaded successfully.");
 

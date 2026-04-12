@@ -34,7 +34,9 @@ pub fn remove_mutable_boundaries(
     let boundaries_mutable = boundaries.logical_and(&not_immutable)?;
 
     let n = boundaries.as_dtype(Dtype::Float32)?.sum_axis(-1, None)?;
-    let m = boundaries_mutable.as_dtype(Dtype::Float32)?.sum_axis(-1, None)?;
+    let m = boundaries_mutable
+        .as_dtype(Dtype::Float32)?
+        .sum_axis(-1, None)?;
 
     let eps = Array::from_f32(1e-8);
     let one = Array::from_f32(1.0);

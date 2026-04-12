@@ -1,4 +1,4 @@
-use game_mlxrs::{midi, score_json, GameVocalTranscriber};
+use game_mlxrs::{GameVocalTranscriber, midi, score_json};
 
 use std::path::PathBuf;
 
@@ -83,12 +83,18 @@ struct Cli {
     quantize_equal_weight: bool,
 }
 
-fn collect_audio_files(path: &std::path::Path, extensions: &std::collections::HashSet<String>) -> Vec<PathBuf> {
+fn collect_audio_files(
+    path: &std::path::Path,
+    extensions: &std::collections::HashSet<String>,
+) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
     }
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if p.is_file() {
             if let Some(ext) = p.extension() {
@@ -153,7 +159,12 @@ fn main() -> Result<()> {
 
         if cli.output_formats.contains(&OutputFormat::Json) {
             let json_path = cli.output_dir.join(
-                audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".json",
+                audio_path
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+                    + ".json",
             );
             score_json::save_json(&json_path, &durations, &presence, &scores)?;
             log::info!("  -> Saved to {}", json_path.display());
@@ -161,7 +172,12 @@ fn main() -> Result<()> {
 
         if cli.output_formats.contains(&OutputFormat::Midi) {
             let midi_path = cli.output_dir.join(
-                audio_path.file_stem().unwrap().to_string_lossy().to_string() + ".mid",
+                audio_path
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+                    + ".mid",
             );
             midi::save_midi(&midi_path, &durations, &presence, &scores, cli.tempo)?;
             log::info!("  -> Saved to {}", midi_path.display());

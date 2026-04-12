@@ -1,12 +1,12 @@
 use anyhow::Result;
 use mlx_rs::Array;
+use mlx_rs::builder::Builder;
+use mlx_rs::macros::ModuleParameters;
 use mlx_rs::module::{Module, Param};
 use mlx_rs::nn;
-use mlx_rs::builder::Builder;
 use mlx_rs::ops::indexing::IndexOp;
-use mlx_rs::macros::ModuleParameters;
 
-use crate::common_layers::{LayScale, RMSNorm, GLUFFN, FFN, CgMLP};
+use crate::common_layers::{CgMLP, FFN, GLUFFN, LayScale, RMSNorm};
 use crate::eglu::HalfCacheGLUFFN;
 use crate::rope::SingleRoPosEmb;
 
@@ -40,8 +40,12 @@ impl AttnWROPEX {
             None
         };
         Ok(Self {
-            q_linear, kv_linear, out_linear, rope,
-            num_heads, head_dim,
+            q_linear,
+            kv_linear,
+            out_linear,
+            rope,
+            num_heads,
+            head_dim,
             scale: (head_dim as f32).powf(-0.5),
         })
     }
@@ -57,9 +61,15 @@ impl AttnWROPEX {
         let k = kv.index((.., .., ..h * d));
         let v = kv.index((.., .., h * d..));
 
-        let q = q.reshape(&[b, t, h, d])?.transpose_axes(&[0, 2, 1, 3][..])?;
-        let k = k.reshape(&[b, t, h, d])?.transpose_axes(&[0, 2, 1, 3][..])?;
-        let v = v.reshape(&[b, t, h, d])?.transpose_axes(&[0, 2, 1, 3][..])?;
+        let q = q
+            .reshape(&[b, t, h, d])?
+            .transpose_axes(&[0, 2, 1, 3][..])?;
+        let k = k
+            .reshape(&[b, t, h, d])?
+            .transpose_axes(&[0, 2, 1, 3][..])?;
+        let v = v
+            .reshape(&[b, t, h, d])?
+            .transpose_axes(&[0, 2, 1, 3][..])?;
 
         let (q, k) = if let Some(ref rope) = self.rope {
             (rope.forward(&q)?, rope.forward(&k)?)
@@ -68,7 +78,9 @@ impl AttnWROPEX {
         };
 
         let out = mlx_rs::fast::scaled_dot_product_attention(&q, &k, &v, self.scale, None, None)?;
-        let out = out.transpose_axes(&[0, 2, 1, 3][..])?.reshape(&[b, t, h * d])?;
+        let out = out
+            .transpose_axes(&[0, 2, 1, 3][..])?
+            .reshape(&[b, t, h * d])?;
         let out = self.out_linear.forward(&out)?;
         Ok(out)
     }
@@ -96,8 +108,12 @@ pub struct PAC {
 
 impl PAC {
     pub fn new(
-        dim: i32, num_heads: i32, head_dim: i32,
-        c_kernel_size: i32, m_kernel_size: i32, use_rope: bool,
+        dim: i32,
+        num_heads: i32,
+        head_dim: i32,
+        c_kernel_size: i32,
+        m_kernel_size: i32,
+        use_rope: bool,
     ) -> Result<Self> {
         let attn = AttnWROPEX::new(dim, num_heads, head_dim, use_rope)?;
         let c = CgMLP::new(dim, c_kernel_size, None, true, true)?;
@@ -105,14 +121,23 @@ impl PAC {
         let c_norm = RMSNorm::new(dim, 1.0, 1e-6);
         let merge_linear = nn::LinearBuilder::new(dim * 2, dim).build()?;
         let merge_dw_conv = if m_kernel_size != 0 {
-            Some(nn::Conv1dBuilder::new(dim * 2, dim * 2, m_kernel_size)
-                .padding(m_kernel_size / 2)
-                .groups(dim * 2)
-                .build()?)
+            Some(
+                nn::Conv1dBuilder::new(dim * 2, dim * 2, m_kernel_size)
+                    .padding(m_kernel_size / 2)
+                    .groups(dim * 2)
+                    .build()?,
+            )
         } else {
             None
         };
-        Ok(Self { attn, c, a_norm, c_norm, merge_linear, merge_dw_conv })
+        Ok(Self {
+            attn,
+            c,
+            a_norm,
+            c_norm,
+            merge_linear,
+            merge_dw_conv,
+        })
     }
 
     pub fn forward(&mut self, x: &Array) -> Result<Array> {
@@ -171,12 +196,23 @@ pub struct EBF {
 
 impl EBF {
     pub fn new(
-        dim: i32, num_heads: i32, head_dim: i32,
-        c_kernel_size: i32, m_kernel_size: i32,
-        use_rope: bool, use_ls: bool,
-        skip_first_ffn: bool, skip_out_ffn: bool,
+        dim: i32,
+        num_heads: i32,
+        head_dim: i32,
+        c_kernel_size: i32,
+        m_kernel_size: i32,
+        use_rope: bool,
+        use_ls: bool,
+        skip_first_ffn: bool,
+        skip_out_ffn: bool,
     ) -> Result<Self> {
-        let mk_ls = |d| if use_ls { Some(LayScale::new(d, 1e-6)) } else { None };
+        let mk_ls = |d| {
+            if use_ls {
+                Some(LayScale::new(d, 1e-6))
+            } else {
+                None
+            }
+        };
 
         let (ffn1, norm1, lay_scale1) = if !skip_first_ffn {
             (
@@ -188,7 +224,14 @@ impl EBF {
             (None, None, None)
         };
 
-        let attn = PAC::new(dim, num_heads, head_dim, c_kernel_size, m_kernel_size, use_rope)?;
+        let attn = PAC::new(
+            dim,
+            num_heads,
+            head_dim,
+            c_kernel_size,
+            m_kernel_size,
+            use_rope,
+        )?;
         let lay_scale2 = mk_ls(dim);
 
         let (ffn2, norm2, lay_scale3) = if !skip_out_ffn {
@@ -202,10 +245,17 @@ impl EBF {
         };
 
         Ok(Self {
-            ffn1, norm1, lay_scale1,
-            attn, lay_scale2,
-            ffn2, norm2, lay_scale3,
-            skip_first_ffn, skip_out_ffn, use_ls,
+            ffn1,
+            norm1,
+            lay_scale1,
+            attn,
+            lay_scale2,
+            ffn2,
+            norm2,
+            lay_scale3,
+            skip_first_ffn,
+            skip_out_ffn,
+            use_ls,
         })
     }
 
@@ -280,21 +330,35 @@ pub struct EBFBackbone {
 
 impl EBFBackbone {
     pub fn new(
-        in_dim: i32, out_dim: i32, return_latent: bool,
-        dim: i32, num_layers: i32,
-        latent_layer_idx: Option<i32>, latent_out_dim: i32,
-        num_heads: i32, head_dim: i32,
-        c_kernel_size: i32, m_kernel_size: i32,
-        use_ls: bool, skip_first_ffn: bool, skip_out_ffn: bool,
+        in_dim: i32,
+        out_dim: i32,
+        return_latent: bool,
+        dim: i32,
+        num_layers: i32,
+        latent_layer_idx: Option<i32>,
+        latent_out_dim: i32,
+        num_heads: i32,
+        head_dim: i32,
+        c_kernel_size: i32,
+        m_kernel_size: i32,
+        use_ls: bool,
+        skip_first_ffn: bool,
+        skip_out_ffn: bool,
     ) -> Result<Self> {
         let input_proj = nn::LinearBuilder::new(in_dim, dim).build()?;
 
         let mut layers = Vec::with_capacity(num_layers as usize);
         for _ in 0..num_layers {
             layers.push(EBF::new(
-                dim, num_heads, head_dim,
-                c_kernel_size, m_kernel_size,
-                true, use_ls, skip_first_ffn, skip_out_ffn,
+                dim,
+                num_heads,
+                head_dim,
+                c_kernel_size,
+                m_kernel_size,
+                true,
+                use_ls,
+                skip_first_ffn,
+                skip_out_ffn,
             )?);
         }
 
@@ -311,9 +375,14 @@ impl EBFBackbone {
         let output_proj = nn::LinearBuilder::new(dim, out_dim).build()?;
 
         Ok(Self {
-            input_proj, layers, latent_norm, latent_proj,
-            output_norm, output_proj,
-            return_latent, latent_layer_idx,
+            input_proj,
+            layers,
+            latent_norm,
+            latent_proj,
+            output_norm,
+            output_proj,
+            return_latent,
+            latent_layer_idx,
         })
     }
 

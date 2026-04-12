@@ -1,12 +1,16 @@
 use anyhow::Result;
 use mlx_rs::Array;
 use mlx_rs::Dtype;
-use mlx_rs::ops::indexing::{Ellipsis, IndexOp, IntoStrideBy};
 use mlx_rs::macros::ModuleParameters;
+use mlx_rs::ops::indexing::{Ellipsis, IndexOp, IntoStrideBy};
 
 pub fn compute_inv_freq(dim: i32, theta: f32) -> Result<Array> {
     let half = dim / 2;
-    let arange_vec: Vec<f32> = (0..dim).step_by(2).take(half as usize).map(|i| i as f32).collect();
+    let arange_vec: Vec<f32> = (0..dim)
+        .step_by(2)
+        .take(half as usize)
+        .map(|i| i as f32)
+        .collect();
     let arange = Array::from_slice(&arange_vec, &[half]);
     let dim_arr = Array::from_f32(dim as f32);
     let theta_arr = Array::from_f32(theta);
@@ -40,11 +44,7 @@ pub fn apply_rotary_emb(x: &Array, freqs_cos: &Array, freqs_sin: &Array) -> Resu
     Ok(out.as_dtype(orig_dtype)?)
 }
 
-pub fn apply_rotary_by_positions(
-    x: &Array,
-    positions: &Array,
-    inv_freq: &Array,
-) -> Result<Array> {
+pub fn apply_rotary_by_positions(x: &Array, positions: &Array, inv_freq: &Array) -> Result<Array> {
     let pos = mlx_rs::ops::expand_dims(positions, -1)?.as_dtype(Dtype::Float32)?;
 
     let mut inv_shape = vec![1i32; pos.ndim() - 1];

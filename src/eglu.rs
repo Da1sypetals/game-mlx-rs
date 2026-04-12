@@ -1,8 +1,8 @@
 use anyhow::Result;
 use mlx_rs::Array;
+use mlx_rs::macros::ModuleParameters;
 use mlx_rs::module::Param;
 use mlx_rs::nn;
-use mlx_rs::macros::ModuleParameters;
 
 // ---------------------------------------------------------------------------
 // HalfCacheGLUFFN (eval-only path: standard forward)
